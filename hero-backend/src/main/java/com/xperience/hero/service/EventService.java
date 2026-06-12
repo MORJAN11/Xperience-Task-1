@@ -46,23 +46,25 @@ public class EventService {
     }
 
     @Transactional
-    public void inviteAttendees(Long eventId, String[] emails) {
+    public List<InviteeDTO> inviteAttendees(Long eventId, String[] emails) {
         Event event = eventRepository.findById(eventId)
             .orElseThrow(() -> new RuntimeException("Event not found"));
 
+        List<InviteeDTO> result = new java.util.ArrayList<>();
         for (String email : emails) {
-            // Check if already invited
-            inviteeRepository.findByEventIdAndEmail(eventId, email).ifPresentOrElse(
-                invitee -> {
-                    // Already invited, skip
-                },
-                () -> {
-                    // Create new invitee
-                    Invitee invitee = new Invitee(event, email);
-                    inviteeRepository.save(invitee);
-                }
-            );
+            Invitee invitee = inviteeRepository.findByEventIdAndEmail(eventId, email)
+                .orElseGet(() -> inviteeRepository.save(new Invitee(event, email)));
+            result.add(convertInviteeToDTO(invitee));
         }
+        return result;
+    }
+
+    public List<InviteeDTO> getInvitees(Long eventId, String hostEmail) {
+        eventRepository.findByIdAndHostEmail(eventId, hostEmail)
+            .orElseThrow(() -> new RuntimeException("Event not found or not authorized"));
+        return inviteeRepository.findByEventId(eventId).stream()
+            .map(this::convertInviteeToDTO)
+            .collect(Collectors.toList());
     }
 
     @Transactional
@@ -124,6 +126,15 @@ public class EventService {
             event.getStatus(),
             event.getCreatedAt(),
             event.getUpdatedAt()
+        );
+    }
+
+    private InviteeDTO convertInviteeToDTO(Invitee invitee) {
+        return new InviteeDTO(
+            invitee.getId(),
+            invitee.getEvent().getId(),
+            invitee.getEmail(),
+            invitee.getUniqueToken()
         );
     }
 

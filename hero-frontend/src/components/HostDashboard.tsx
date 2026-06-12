@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getDashboard, cancelEvent, closeEvent, Dashboard } from '../services/eventApi';
+import { getDashboard, cancelEvent, closeEvent, getInvitees, Dashboard, Invitee } from '../services/eventApi';
 import '../styles/Dashboard.css';
 
 interface HostDashboardProps {
@@ -9,9 +9,11 @@ interface HostDashboardProps {
 
 export const HostDashboard = ({ eventId, hostEmail }: HostDashboardProps) => {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [invitees, setInvitees] = useState<Invitee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'close' | null>(null);
+  const [showLinks, setShowLinks] = useState(false);
 
   useEffect(() => {
     fetchDashboard();
@@ -21,8 +23,12 @@ export const HostDashboard = ({ eventId, hostEmail }: HostDashboardProps) => {
 
   const fetchDashboard = async () => {
     try {
-      const data = await getDashboard(eventId, hostEmail);
+      const [data, inviteeData] = await Promise.all([
+        getDashboard(eventId, hostEmail),
+        getInvitees(eventId, hostEmail),
+      ]);
       setDashboard(data);
+      setInvitees(inviteeData);
     } catch (err) {
       setError('Failed to load dashboard');
       console.error(err);
@@ -49,6 +55,13 @@ export const HostDashboard = ({ eventId, hostEmail }: HostDashboardProps) => {
     } catch (err) {
       setError('Failed to close event');
     }
+  };
+
+  const getRsvpLink = (token: string) =>
+    `${window.location.origin}${window.location.pathname}?token=${token}`;
+
+  const copyLink = (token: string) => {
+    navigator.clipboard.writeText(getRsvpLink(token));
   };
 
   if (loading) return <div>Loading dashboard...</div>;
@@ -105,6 +118,52 @@ export const HostDashboard = ({ eventId, hostEmail }: HostDashboardProps) => {
           )}
         </div>
       </div>
+
+      {invitees.length > 0 && (
+        <div className="rsvp-links-section">
+          <div className="rsvp-links-header">
+            <h3>RSVP Links ({invitees.length} invited)</h3>
+            <button className="btn-toggle-links" onClick={() => setShowLinks((v) => !v)}>
+              {showLinks ? 'Hide Links' : 'Show Links'}
+            </button>
+          </div>
+          {showLinks && (
+            <table className="rsvp-links-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>RSVP Link</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {invitees.map((invitee) => (
+                  <tr key={invitee.uniqueToken}>
+                    <td>{invitee.email}</td>
+                    <td>
+                      <input
+                        readOnly
+                        value={getRsvpLink(invitee.uniqueToken)}
+                        className="rsvp-link-input"
+                        onFocus={(e) => e.target.select()}
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-copy"
+                        onClick={() => copyLink(invitee.uniqueToken)}
+                      >
+                        Copy
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       <div className="actions">
         {event.status === 'OPEN_FOR_RSVPS' && (

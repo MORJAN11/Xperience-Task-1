@@ -13,6 +13,13 @@ export interface Event {
   updatedAt: string;
 }
 
+export interface Invitee {
+  id: number;
+  eventId: number;
+  email: string;
+  uniqueToken: string;
+}
+
 export interface RSVP {
   id: number;
   inviteeId: number;
@@ -57,13 +64,20 @@ export const getEvent = async (eventId: number): Promise<Event> => {
   return response.json();
 };
 
-export const inviteAttendees = async (eventId: number, emails: string[]): Promise<void> => {
+export const inviteAttendees = async (eventId: number, emails: string[]): Promise<Invitee[]> => {
   const response = await fetch(`${API_BASE_URL}/events/${eventId}/invite`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emails }),
   });
   if (!response.ok) throw new Error('Failed to invite attendees');
+  return response.json();
+};
+
+export const getInvitees = async (eventId: number, hostEmail: string): Promise<Invitee[]> => {
+  const response = await fetch(`${API_BASE_URL}/events/${eventId}/invitees?hostEmail=${encodeURIComponent(hostEmail)}`);
+  if (!response.ok) throw new Error('Failed to get invitees');
+  return response.json();
 };
 
 export const cancelEvent = async (eventId: number, hostEmail: string): Promise<void> => {

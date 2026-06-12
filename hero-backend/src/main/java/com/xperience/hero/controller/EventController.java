@@ -36,12 +36,22 @@ public class EventController {
     }
 
     @PostMapping("/{id}/invite")
-    public ResponseEntity<Void> inviteAttendees(@PathVariable Long id, @RequestBody InviteRequest request) {
+    public ResponseEntity<java.util.List<InviteeDTO>> inviteAttendees(@PathVariable Long id, @RequestBody InviteRequest request) {
         try {
-            eventService.inviteAttendees(id, request.getEmails());
-            return ResponseEntity.ok().build();
+            java.util.List<InviteeDTO> invitees = eventService.inviteAttendees(id, request.getEmails());
+            return ResponseEntity.ok(invitees);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        }
+    }
+
+    @GetMapping("/{id}/invitees")
+    public ResponseEntity<java.util.List<InviteeDTO>> getInvitees(@PathVariable Long id, @RequestParam String hostEmail) {
+        try {
+            java.util.List<InviteeDTO> invitees = eventService.getInvitees(id, hostEmail);
+            return ResponseEntity.ok(invitees);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
     }
 
