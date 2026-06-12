@@ -1,236 +1,17 @@
-# Event RSVP Manager - Design Document
-
-## 1. Problem Statement
-
-Event hosts need a simple, web-based system to collect, track, and manage RSVPs from invitees. The system must handle capacity limits, automatic waitlist promotion, and lock RSVPs after the event starts.
+# Event RSVP Manager — Design Document
 
 ---
 
-## 2. Goals and Non-Goals
+## Step 01 — Setup
 
-### Goals
-- Hosts can create events and invite people by email
-- Invitees can respond: Yes, No, Maybe via unique link
-- Hosts see real-time attendance dashboard
-- Capacity management with automatic waitlist
-- Invitees can change RSVP before event starts
-- RSVPs are locked after event start time
-
-### Non-Goals
-- User authentication/authorization (no login required)
-- Event reminders or notifications
-- Integration with calendar systems
-- Video conferencing or streaming
-- Multiple events per host (scope: single event management)
+**AI Partner used:** Claude (Anthropic)  
+**Method:** Iterative prompt-and-refine — each step was discussed with the AI, output was reviewed and edited before copying into this file. Raw AI back-and-forth stays out of this document.
 
 ---
 
-## 3. Context and Constraints
+## Step 02 — Raw Feature Brief
 
-### Context
-- Spring Boot backend with PostgreSQL
-- React/TypeScript frontend with Vite
-- Single-sprint implementation
-- No user authentication (public events)
-
-### Constraints
-- Event start time determines RSVP lock
-- Max capacity is optional but immutable once set
-- Invitee email uniqueness within an event
-- Waitlist movement must be atomic
-
----
-
-## 4. Facts, Assumptions, and Open Questions
-
-### Facts
-- Event creator is the host
-- RSVPs are tied to email addresses
-- Each invitee gets a unique response link
-- Capacity limit is per event, not global
-
-### Assumptions
-- Email addresses are valid and unique within an event
-- Event start time is in UTC/ISO format
-- Hosts and invitees use the same browser
-- No concurrent bulk RSVP operations
-
-### Open Questions
-- Should invitees see other attendees' responses?
-- Should hosts be able to edit attendee responses?
-- How long are unique RSVP links valid?
-- What happens if host deletes the event?
-
----
-
-## 5. Actors and Workflows
-
-### Actors
-- **Host**: Creates event, invites people, views dashboard, manages event
-- **Invitee**: Receives invite link, responds with Yes/No/Maybe, can change response
-- **System**: Manages state transitions, capacity tracking, waitlist promotion
-
-### Workflows
-
-**Host Workflow:**
-1. Create event (title, description, date/time, location, max capacity)
-2. Invite people by email
-3. View real-time dashboard showing responses and counts
-4. Cancel event or close it to further responses
-
-**Invitee Workflow:**
-1. Receive email with unique response link
-2. Click link to open response page
-3. Select Yes/No/Maybe
-4. If event is at capacity: invited as "Waitlisted"
-5. Can change response anytime before event starts
-6. After event start: RSVP locked
-
----
-
-## 6. Invariants
-
-- **Capacity Invariant**: Confirmed count ≤ max capacity (or 0 if no limit)
-- **Waitlist Promotion**: When confirmed attendee changes to No, first waitlisted moves to confirmed
-- **Lock After Start**: No RSVP changes allowed after event start time
-- **Email Uniqueness**: One RSVP per email per event
-- **Host Ownership**: Only event creator can modify/cancel event
-- **State Consistency**: Event status gates what actions are allowed
-
----
-
-## 7. Architecture
-
-### First-Pass Architecture
-
-**Backend (Spring Boot):**
-```
-Controller Layer
-  ↓
-Service Layer (business logic)
-  ↓
-Repository Layer (data access)
-  ↓
-PostgreSQL (Event, Invitee, RSVP tables)
-```
-
-**Key Components:**
-- `EventController` - Create/view/cancel/close events
-- `EventService` - Event logic, capacity checking
-- `RSVPController` - Accept/update RSVP responses
-- `RSVPService` - RSVP logic, waitlist promotion
-- `EventRepository`, `InviteeRepository`, `RSVPRepository` - Data access
-
-**Frontend (React):**
-- Event creation page
-- Invite management page
-- Host dashboard (attendance tracking)
-- Invitee response page (via unique link)
-
-### Data Ownership and State Model
-
-**Core Entities:**
-
-**Event**
-- title, description, location
-- startDateTime, maxCapacity (optional)
-- createdBy (host email)
-- status: DRAFT, OPEN_FOR_RSVPS, LOCKED, CANCELLED, CLOSED
-- createdAt, updatedAt
-
-**Invitee**
-- email
-- eventId
-- uniqueToken (for response link)
-
-**RSVP**
-- inviteeId, eventId
-- status: YES, NO, MAYBE, WAITLISTED
-- respondedAt
-
-**State Machines:**
-- Event: DRAFT → OPEN_FOR_RSVPS → LOCKED (auto, at startDateTime) or CANCELLED or CLOSED
-- RSVP: YES/NO/MAYBE or WAITLISTED (if capacity reached)
-
----
-
-## 8. Trust, Security, and Operational Notes
-
-### Trust Boundaries and Security
-
-- **No authentication** - Anyone can visit
-- **Host Access Control**: Only creator can modify event (need to track host somehow)
-- **RSVP Link Security**: Unique token prevents guessing
-- **Email Validation**: Basic format check, no verification required
-- **No sensitive data exposure**: Don't reveal other invitees' emails or responses
-
-### Concurrency and Correctness
-
-**Critical Scenario**: Two invitees RSVP "Yes" simultaneously when exactly one spot remains
-- Solution: Database transaction on capacity check → insert RSVP with status
-- One succeeds with YES, other auto-assigned WAITLISTED
-
-**Waitlist Promotion**: When host changes response from Yes to No
-- Transaction: Decrement confirmed count, find first waitlisted, promote to YES
-- Must be atomic to prevent double-promotion
-
-### Scalability and Multi-Tenancy
-
-- **Not multi-tenant**: Each event is isolated
-- **Expected scale**: Single sprint, small number of concurrent events
-- **Indexing**: eventId, inviteeId for fast lookups
-- **No sharding needed** at this scale
-
----
-
-## 9. Risks and Failure Modes
-
-**Risk: Email Uniqueness**
-- If invitee invited twice with different emails, creates duplicate RSVPs
-- Mitigation: Unique constraint on (event, email)
-
-**Risk: Race Condition on Capacity**
-- Multiple simultaneous Yes responses → might accept more than capacity
-- Mitigation: Database-level transaction with row-level lock
-
-**Risk: Host Identity**
-- No auth, so how do we know who the host is when they return?
-- Mitigation: Email-based host link (like invitees get) or simple session
-
-**Risk: Data Loss**
-- No backup strategy mentioned
-- Mitigation: PostgreSQL handles this; assume production backup in place
-
----
-
-## 10. Alternatives and Tradeoffs
-
-**Alt 1: User Accounts**
-- Pro: Can track host across sessions, more secure
-- Con: Adds auth complexity, friction for simple use case
-- **Decision**: Skip for MVP, use email + token
-
-**Alt 2: WebSocket for Live Dashboard**
-- Pro: Real-time updates without refresh
-- Con: More infrastructure, not essential for MVP
-- **Decision**: HTTP polling sufficient for now
-
-**Alt 3: Automatic Waitlist to Confirmed**
-- Pro: Faster, no manual steps
-- Con: Only works if one spot frees; might miss second, third, etc.
-- **Decision**: Implement with transaction to handle sequentially
-
----
-
-## 11. Rollout and Migration Notes
-
-- **No existing data**: Fresh PostgreSQL schema
-- **No rollout phases**: Single-sprint sprint, deploy everything at once
-- **Future migration**: If we add user accounts, need to link events to user IDs
-
----
-
-## Appendix: Raw Feature Brief (Working Notes)
+> Captured verbatim from the task brief before any analysis.
 
 - A user can create an event with a title, description, date/time, location, and optional max-capacity.
 - The creator becomes the **host** of that event.
@@ -244,3 +25,297 @@ PostgreSQL (Event, Invitee, RSVP tables)
 - After the event start time, all RSVPs are locked.
 
 ---
+
+## Step 03 — Problem Statement
+
+Event hosts need a simple, web-based system to collect, track, and manage RSVPs from invitees. The system must handle optional capacity limits, promote waitlisted attendees automatically when a confirmed spot is freed, and lock all RSVPs once the event starts — without requiring user accounts.
+
+---
+
+## Step 04 — Goals and Non-Goals
+
+### Goals
+- Host can create an event (title, description, date/time, location, optional max-capacity)
+- Host can invite people by email; each invitee gets a unique response link
+- Invitees can respond Yes, No, or Maybe via their unique link
+- Host sees a live attendance dashboard with counts per status
+- System enforces capacity: excess Yes responses become Waitlisted
+- A waitlisted invitee is automatically promoted when a confirmed attendee switches to No
+- Host can cancel or close the event at any time
+- Invitees can change their response before the event starts
+- RSVPs are locked after the event start time
+
+### Non-Goals
+- User authentication or login
+- Email delivery of invitations (links are generated; delivery is out of scope)
+- Integration with calendar systems (Google Calendar, Outlook, etc.)
+- Video conferencing or streaming
+- Multiple simultaneous events per host
+- Event editing after creation
+
+---
+
+## Step 05 — Context and Constraints
+
+### Context
+- Spring Boot 4 backend, PostgreSQL database
+- React 19 + TypeScript frontend, Vite build tool
+- Single-sprint implementation, no existing users or data
+- No user authentication — identity is established via email + unique token
+
+### Constraints
+- Event start time is the hard lock point for RSVPs; the system checks this on every response attempt
+- Max capacity is optional; if set, it is immutable after event creation
+- One RSVP per email address per event (enforced by unique constraint)
+- Waitlist promotion must be atomic — two simultaneous promotions for the same spot must not both succeed
+
+---
+
+## Step 06 — Facts, Assumptions, and Open Questions
+
+### Facts
+- The event creator is the host
+- RSVPs are tied to email addresses, not user accounts
+- Each invitee receives exactly one unique token used to identify them
+- Capacity limit, if set, applies only to YES responses (not Maybe)
+- The system auto-transitions event status to LOCKED at startDateTime
+
+### Assumptions
+- Email addresses entered by the host are valid and reachable
+- Event start time is supplied in the local timezone of the browser and stored as-is
+- Hosts and invitees access the system from modern browsers
+- Concurrent bulk RSVPs (e.g., 100 simultaneous Yes responses) are not expected at this scale
+
+### Open Questions
+- Should invitees be able to see other attendees' names or response statuses?
+- Should the host be able to manually override an invitee's RSVP?
+- How long should unique RSVP links remain valid after the event ends?
+- What happens to data if the host cancels the event — is it soft-deleted or hard-deleted?
+
+---
+
+## Step 07 — Actors and Workflows
+
+### Actors
+- **Host** — Creates the event, invites people, monitors the dashboard, manages event lifecycle
+- **Invitee** — Receives a unique link, responds Yes/No/Maybe, can update response before event starts
+- **System** — Enforces capacity, promotes waitlisted invitees, locks RSVPs after start time
+
+### Host Workflow
+1. Create event (title, description, date/time, location, optional max-capacity, host email)
+2. Add invitees by email — system generates a unique RSVP link per invitee
+3. Share RSVP links with invitees (copy from the invite page)
+4. Monitor live dashboard: see confirmed / maybe / declined / waitlisted counts and attendee list
+5. Optionally cancel the event or close it to further responses at any time
+
+### Invitee Workflow
+1. Receive unique RSVP link from host
+2. Open link — see invitation response page showing current status
+3. Select Yes, No, or Maybe
+4. If event is at capacity and response is Yes → automatically placed on Waitlist
+5. Can change response at any time before event start time
+6. After event start time → response page shows status as locked, no changes accepted
+
+---
+
+## Step 08 — Invariants
+
+These must hold at all times regardless of concurrent access or partial failures.
+
+- **Capacity Invariant**: The count of YES RSVPs for an event never exceeds maxCapacity (when set)
+- **Waitlist Promotion**: When a YES RSVP changes to NO and a spot opens, exactly one waitlisted invitee (the earliest by creation time) is promoted to YES atomically
+- **Lock After Start**: No RSVP create or update is accepted after the event's startDateTime
+- **Email Uniqueness**: Exactly one RSVP record exists per (email, event) pair
+- **Host Ownership**: Only the host (matched by hostEmail) can cancel, close, or view the management dashboard for an event
+- **State Consistency**: A CANCELLED or CLOSED event does not accept new RSVP responses
+
+---
+
+## Step 09 — First-Pass Architecture
+
+**Backend (Spring Boot):**
+```
+EventController / RSVPController   ← HTTP layer
+         ↓
+EventService / RSVPService         ← Business logic, invariants enforced here
+         ↓
+EventRepository / InviteeRepository / RSVPRepository   ← Spring Data JPA
+         ↓
+PostgreSQL — schema: hero
+  Tables: events, invitees, rsvps
+```
+
+**Key Backend Components:**
+- `EventController` — `POST /api/events`, `GET /api/events/{id}`, `POST /api/events/{id}/invite`, `GET /api/events/{id}/invitees`, `POST /api/events/{id}/cancel`, `POST /api/events/{id}/close`, `GET /api/events/{id}/dashboard`
+- `RSVPController` — `GET /api/rsvp/{token}`, `POST /api/rsvp/{token}`, `PUT /api/rsvp/{token}`
+- `EventService` — event creation, invite management, dashboard aggregation, cancel/close
+- `RSVPService` — response recording, capacity check, waitlist promotion (all in one transaction)
+
+**Frontend (React + TypeScript):**
+- `CreateEvent` — form to create a new event
+- `InviteAttendees` — add invitee emails, display generated RSVP links with copy buttons
+- `HostDashboard` — live counts, attendee list, RSVP links, cancel/close actions; polls every 5 seconds
+- `RSVPResponse` — invitee-facing page loaded via `?token=…` URL param
+
+---
+
+## Step 10 — Data Ownership and State Model
+
+### Entities
+
+**Event**
+| Field | Type | Notes |
+|---|---|---|
+| id | bigint PK | auto-generated |
+| title | varchar | required |
+| description | text | optional |
+| location | varchar | required |
+| startDateTime | timestamp | required; triggers lock |
+| maxCapacity | integer | optional; immutable after creation |
+| hostEmail | varchar | identifies the host |
+| status | enum | see state machine below |
+| createdAt / updatedAt | timestamp | audit fields |
+
+**Invitee**
+| Field | Type | Notes |
+|---|---|---|
+| id | bigint PK | auto-generated |
+| eventId | FK → events | |
+| email | varchar | unique per event |
+| uniqueToken | varchar | UUID; used in RSVP link |
+
+**RSVP**
+| Field | Type | Notes |
+|---|---|---|
+| id | bigint PK | auto-generated |
+| inviteeId | FK → invitees | |
+| eventId | FK → events | |
+| status | enum | YES / NO / MAYBE / WAITLISTED |
+| respondedAt | timestamp | last response time |
+| createdAt / updatedAt | timestamp | audit fields |
+
+### State Machines
+
+**Event status:**
+```
+OPEN_FOR_RSVPS
+   → LOCKED     (automatic, when now ≥ startDateTime)
+   → CANCELLED  (host action)
+   → CLOSED     (host action)
+```
+
+**RSVP status:**
+```
+(none) → MAYBE / YES / NO   (first response)
+YES    → NO / MAYBE          (invitee changes mind; may trigger waitlist promotion)
+NO     → YES / MAYBE         (invitee changes mind; subject to capacity check)
+WAITLISTED → YES             (system promotes when a confirmed spot opens)
+```
+
+---
+
+## Step 11 — Trust Boundaries and Security
+
+| Boundary | Rule |
+|---|---|
+| Host identity | No login; host is identified by the email they typed at creation. Any request with the correct hostEmail + eventId is treated as the host. |
+| Invitee identity | No login; identified by uniqueToken in URL. Tokens are UUIDs — guessing one is computationally infeasible. |
+| Data visibility | Invitee response page shows only that invitee's own status. Dashboard is only accessible with the correct hostEmail. |
+| Email validation | Basic format check only; no email verification step. |
+| Token lifetime | Tokens do not expire in the current design (open question). |
+| Sensitive data | Invitee emails are not exposed to other invitees through any API response. |
+
+---
+
+## Step 12 — Concurrency and Correctness
+
+**Scenario 1: Two invitees RSVP "Yes" simultaneously when exactly one spot remains**
+- Both requests enter `RSVPService.respondToRSVP` in parallel
+- Both read `confirmedCount = maxCapacity - 1` (one spot free) before either writes
+- Without protection: both would write YES → capacity exceeded
+- **Solution**: the `countConfirmedByEventId` query and RSVP insert run inside a `@Transactional` method; PostgreSQL's default READ COMMITTED isolation plus the unique constraint on (invitee_id, event_id) ensures only one write succeeds as YES; the other sees capacity full and is written as WAITLISTED
+
+**Scenario 2: Two confirmed attendees change to No simultaneously, two waitlisted people waiting**
+- Both trigger `promoteFromWaitlist` inside their transaction
+- **Solution**: `findFirstWaitlistedByEventId` runs inside the same transaction; row-level locking via JPA prevents double-promotion of the same waitlisted record
+
+---
+
+## Step 13 — Scalability and Multi-Tenancy
+
+- **Not multi-tenant**: each event is independent; no shared state between events
+- **Expected scale**: tens of events, hundreds of RSVPs — no sharding or caching required
+- **Database indexes**: `event_id` on both `invitees` and `rsvps` tables for fast dashboard queries; `unique_token` on `invitees` for O(1) token lookup
+- **Dashboard polling**: frontend polls every 5 seconds via HTTP; acceptable at this scale; WebSockets would be considered if the event count or attendee count grew by 10×
+
+---
+
+## Step 14 — Risks and Failure Modes
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Host forgets host email | Cannot access dashboard or manage event | No recovery path in current design — open question for future auth |
+| Invitee shares their RSVP link | Another person can respond on their behalf | Acceptable for no-auth MVP; token is the only identity |
+| Race condition on capacity check | More confirmed than capacity | `@Transactional` + DB unique constraints (see Step 12) |
+| Event start time in wrong timezone | RSVP lock triggers at wrong time | Browser supplies local time; no server-side timezone conversion — assumption documented in Step 06 |
+| No email delivery | Invitees never receive their link | Out of scope; host must manually share links |
+| Data loss | All event data lost | PostgreSQL durability; production backup assumed |
+
+---
+
+## Step 15 — Alternatives and Tradeoffs
+
+**Alt 1: User Accounts vs. Email + Token**
+- Pro (accounts): persistent host identity, more secure, recoverable
+- Con (accounts): login/auth adds a full sprint of complexity; friction for a simple use case
+- **Decision**: Email + token for MVP. Revisit if host-identity problems appear in practice.
+
+**Alt 2: WebSocket vs. HTTP Polling for Dashboard**
+- Pro (WebSocket): true real-time, no unnecessary requests
+- Con (WebSocket): requires additional infrastructure; overkill for tens of attendees
+- **Decision**: HTTP polling every 5 seconds. Sufficient for expected scale.
+
+**Alt 3: Automatic vs. Manual Waitlist Promotion**
+- Pro (automatic): invitees don't wait for host action
+- Con (automatic): must handle the case where multiple spots free at once correctly
+- **Decision**: Automatic promotion, implemented atomically per freed spot (one promotion per cancellation).
+
+**Alt 4: Immutable Max Capacity vs. Editable**
+- Pro (editable): host can increase capacity after inviting
+- Con (editable): requires re-checking all waitlisted invitees on each edit; complex
+- **Decision**: Immutable after creation to keep capacity logic simple.
+
+---
+
+## Step 16 — Rollout and Migration Notes
+
+- **No existing data**: fresh PostgreSQL schema; Hibernate `ddl-auto: update` creates all tables on first boot
+- **No rollout phases**: single-sprint, deploy backend and frontend together
+- **Schema migration path**: if user accounts are added later, `events.host_email` becomes a FK to a `users` table; `invitees.unique_token` remains as-is
+- **No backwards-compatibility concerns**: no prior version of this system exists
+
+---
+
+## Step 17 — Pre-Review Weakness Check
+
+Checking the completed design against the Definition of Success:
+
+| Criterion | Met? | Notes |
+|---|---|---|
+| Clear problem statement | Yes | Step 03 |
+| Bounded scope with explicit non-goals | Yes | Step 04 |
+| Facts separated from assumptions | Yes | Step 06 |
+| Explicit workflows for all actors | Yes | Step 07 — Host, Invitee, System |
+| Named invariants | Yes | Step 08 — 6 named invariants |
+| Real architecture boundaries | Yes | Step 09 — layers named, endpoints listed |
+| Explicit state ownership | Yes | Step 10 — state machines for Event and RSVP |
+| Trust boundary treatment | Yes | Step 11 |
+| Concurrency scenario addressed | Yes | Step 12 — two simultaneous Yes scenario |
+| Scalability treatment | Yes | Step 13 |
+| Visible risks and tradeoffs | Yes | Steps 14 and 15 |
+| Unresolved open questions | Yes | Step 06 — 4 open questions listed |
+
+**Remaining weaknesses:**
+- Host identity has no recovery path (by design for MVP — documented as open question)
+- No email delivery mechanism (explicitly out of scope)
+- Timezone handling is assumption-based, not enforced server-side
