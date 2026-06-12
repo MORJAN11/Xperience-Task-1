@@ -1,11 +1,5 @@
 # Event RSVP Manager - Design Document
 
-> **Status**: First Draft  
-> **Last Updated**: June 3, 2026  
-> **Author**: Xperience Task 01 Team  
-
----
-
 ## 1. Problem Statement
 
 Event hosts need a simple, web-based system to collect, track, and manage RSVPs from invitees. The system must handle capacity limits, automatic waitlist promotion, and lock RSVPs after the event starts.
